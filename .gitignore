@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+venv/
+backend/venv/
+.venv/
+backend/.venv/
+
+# Local env files (secrets)
+.env
+.env.local
+backend/.env
+frontend/.env.local
+frontend/.env
+
+# Next.js build output
+.next/
+frontend/.next/
+out/
+
+# Python cache & compiled files
+__pycache__/
+backend/app/__pycache__/
+backend/app/routes/__pycache__/
+backend/app/utils/__pycache__/
+backend/app/services/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE and OS files
+.DS_Store
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp

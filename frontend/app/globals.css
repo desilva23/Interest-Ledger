@@ -1,0 +1,53 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #ECE3CC;
+  color: #1B2430;
+}
+
+.font-mono {
+  font-variant-numeric: tabular-nums;
+}
+
+.ledger-card {
+  background: #F7F2E2;
+  border: 1px solid rgba(27, 36, 48, 0.14);
+  border-radius: 8px;
+}
+
+.stamp {
+  display: inline-block;
+  border: 2px double currentColor;
+  padding: 2px 9px;
+  font-family: 'Fraunces', serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  border-radius: 3px;
+  transform: rotate(-4deg);
+  white-space: nowrap;
+}
+
+.ledger-input {
+  width: 100%;
+  border: 1px solid rgba(27, 36, 48, 0.18);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13.5px;
+  background: #fff;
+  color: #1B2430;
+}
+.ledger-input:focus {
+  outline: 2px solid #B8923D;
+  outline-offset: 1px;
+}
+.ledger-input:disabled {
+  background: rgba(27, 36, 48, 0.05);
+  color: rgba(27, 36, 48, 0.6);
+  cursor: not-allowed;
+  border-color: rgba(27, 36, 48, 0.10);
+}
