@@ -66,47 +66,39 @@ def fetch_loans_due_on(date_iso: str) -> list:
             row["due_date_str"] = str(row["due_date"])
     return rows
 
-def run_morning_pass() -> None:
-    """Run the morning reminder pass synchronously (called by APScheduler)."""
+async def run_morning_pass_async() -> None:
+    """Run the morning reminder pass asynchronously."""
     today = today_iso()
     tomorrow = add_days(today, 1)
     
     # Loans due tomorrow
     due_tomorrow = fetch_loans_due_on(tomorrow)
     for loan in due_tomorrow:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(send_if_not_already_sent(loan, "one_day_before", today))
-        finally:
-            loop.close()
+        await send_if_not_already_sent(loan, "one_day_before", today)
     
     # Loans due today (morning)
     due_today = fetch_loans_due_on(today)
     for loan in due_today:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(send_if_not_already_sent(loan, "due_morning", today))
-        finally:
-            loop.close()
+        await send_if_not_already_sent(loan, "due_morning", today)
     
     logger.info(f"[reminders] morning pass: {len(due_tomorrow)} due tomorrow, {len(due_today)} due today")
 
-def run_evening_pass() -> None:
-    """Run the evening reminder pass synchronously (called by APScheduler)."""
+def run_morning_pass() -> None:
+    """Run the morning reminder pass synchronously (called by APScheduler)."""
+    asyncio.run(run_morning_pass_async())
+
+async def run_evening_pass_async() -> None:
+    """Run the evening reminder pass asynchronously."""
     today = today_iso()
-    
     due_today = fetch_loans_due_on(today)
     for loan in due_today:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(send_if_not_already_sent(loan, "due_evening", today))
-        finally:
-            loop.close()
+        await send_if_not_already_sent(loan, "due_evening", today)
     
     logger.info(f"[reminders] evening pass: {len(due_today)} still due today")
+
+def run_evening_pass() -> None:
+    """Run the evening reminder pass synchronously (called by APScheduler)."""
+    asyncio.run(run_evening_pass_async())
 
 def start_reminder_scheduler(app) -> None:
     """Start the APScheduler-based reminder scheduler."""
