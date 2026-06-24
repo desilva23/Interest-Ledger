@@ -53,12 +53,17 @@ def health_check():
     return {"ok": True}
 
 @app.post("/api/internal/run-reminders")
-async def run_reminders_manual(reminder_secret: Optional[str] = Header(None), pass_type: Optional[str] = None):
+async def run_reminders_manual(
+    x_reminder_secret: Optional[str] = Header(None),
+    reminder_secret: Optional[str] = Header(None),
+    pass_type: Optional[str] = None
+):
     """
     Trigger reminders manually (called by GitHub Actions or external scheduler).
     Protected by a shared secret.
     """
-    if not settings.reminder_trigger_secret or reminder_secret != settings.reminder_trigger_secret:
+    token = x_reminder_secret or reminder_secret
+    if not settings.reminder_trigger_secret or token != settings.reminder_trigger_secret:
         raise HTTPException(status_code=401, detail="Invalid or missing reminder secret")
     
     if pass_type == "morning":
