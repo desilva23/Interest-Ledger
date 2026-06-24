@@ -3,7 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 from typing import Optional
 from app.config import get_settings
-from app.services.reminderScheduler import start_reminder_scheduler, run_morning_pass, run_evening_pass
+from app.services.reminderScheduler import (
+    start_reminder_scheduler,
+    run_morning_pass,
+    run_evening_pass,
+    run_morning_pass_async,
+    run_evening_pass_async,
+)
 from app.routes import auth
 from app.db import db
 
@@ -67,12 +73,12 @@ async def run_reminders_manual(
         raise HTTPException(status_code=401, detail="Invalid or missing reminder secret")
     
     if pass_type == "morning":
-        run_morning_pass()
+        await run_morning_pass_async()
     elif pass_type == "evening":
-        run_evening_pass()
+        await run_evening_pass_async()
     else:
-        run_morning_pass()
-        run_evening_pass()
+        await run_morning_pass_async()
+        await run_evening_pass_async()
     
     return {"ok": True, "pass": pass_type or "both"}
 
