@@ -58,6 +58,7 @@ export default function LoansPage() {
   const [paymentFor, setPaymentFor] = useState<Loan | null>(null);
   const [extendFor, setExtendFor] = useState<Loan | null>(null);
   const [editingLoan, setEditingLoan] = useState<Loan | null>(null);
+  const [showClosed, setShowClosed] = useState(false);
 
   async function load() {
     const [loansRes, payeesRes] = await Promise.all([
@@ -73,6 +74,8 @@ export default function LoansPage() {
   }, []);
 
   const payeeMap = useMemo(() => Object.fromEntries(payees.map((p) => [p.id, p])), [payees]);
+  const activeLoans = useMemo(() => loans.filter((l) => l.status !== "closed"), [loans]);
+  const closedLoans = useMemo(() => loans.filter((l) => l.status === "closed"), [loans]);
 
   async function handleToggleClose(loan: Loan) {
     await api.put(`/api/loans/${loan.id}`, { status: loan.status === "closed" ? "active" : "closed" });
@@ -125,44 +128,108 @@ export default function LoansPage() {
       ) : loans.length === 0 ? (
         <div className="ledger-card p-6 text-center text-sm text-inkSoft">No loans yet. Add a payee, then record your first loan.</div>
       ) : (
-        <div className="flex flex-col gap-2">
-          {loans.map((loan) => {
-            const interestAccrued = Number(loan.initial_interest) + Number(loan.extra_interest);
-            return (
-              <div key={loan.id} className="ledger-card p-3.5">
-                <div className="flex items-start justify-between flex-wrap gap-2">
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold">{payeeMap[loan.payee_id]?.name || "Unknown payee"}</span>
-                      <StatusBadge loan={loan} />
-                    </div>
-                    <div className="font-mono text-xs text-inkSoft mt-1">
-                      {inr(loan.principal)} · {loan.interest_rate}% {loan.interest_type} · started {fmtDate(loan.start_date)} · due {fmtDate(loan.due_date)}
-                    </div>
-                    {loan.notes && (
-                      <div className="text-xs text-inkSoft mt-1.5 italic bg-black/5 px-2.5 py-1 rounded inline-block">
-                        Note: {loan.notes}
-                      </div>
-                    )}
-                  </div>
-                  <div className="text-right">
-                    <div className="font-mono font-bold text-gold">{inr(interestAccrued)}</div>
-                    <div className="text-[10px] text-inkSoft">interest accrued</div>
-                  </div>
+        <>
+          {activeLoans.length === 0 ? (
+            <div className="ledger-card p-6 text-center text-sm text-inkSoft">No active loans.</div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {activeLoans.map((loan) => (
+                <LoanCard
+                  key={loan.id}
+                  loan={loan}
+                  payeeName={payeeMap[loan.payee_id]?.name}
+                  onRecordPayment={() => setPaymentFor(loan)}
+                  onExtend={() => setExtendFor(loan)}
+                  onToggleClose={() => handleToggleClose(loan)}
+                  onEdit={() => setEditingLoan(loan)}
+                  onDelete={() => handleDelete(loan.id)}
+                />
+              ))}
+            </div>
+          )}
+
+          {closedLoans.length > 0 && (
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => setShowClosed((v) => !v)}
+                className="flex items-center gap-1.5 text-xs font-semibold text-inkSoft underline"
+              >
+                <span className={`inline-block transition-transform ${showClosed ? "rotate-90" : ""}`}>▶</span>
+                Closed loans ({closedLoans.length})
+              </button>
+              {showClosed && (
+                <div className="flex flex-col gap-2 mt-2">
+                  {closedLoans.map((loan) => (
+                    <LoanCard
+                      key={loan.id}
+                      loan={loan}
+                      payeeName={payeeMap[loan.payee_id]?.name}
+                      onRecordPayment={() => setPaymentFor(loan)}
+                      onExtend={() => setExtendFor(loan)}
+                      onToggleClose={() => handleToggleClose(loan)}
+                      onEdit={() => setEditingLoan(loan)}
+                      onDelete={() => handleDelete(loan.id)}
+                    />
+                  ))}
                 </div>
-                <div className="flex gap-2 mt-2.5 pt-2.5 border-t border-dashed border-black/10 text-xs flex-wrap">
-                  <button className="underline text-sage" onClick={() => setPaymentFor(loan)}>Record payment</button>
-                  {loan.status !== "closed" && <button className="underline text-gold" onClick={() => setExtendFor(loan)}>Extend</button>}
-                  <button className="underline" onClick={() => handleToggleClose(loan)}>{loan.status === "closed" ? "Reopen" : "Close loan"}</button>
-                  <button className="underline text-cover font-semibold" onClick={() => setEditingLoan(loan)}>Edit</button>
-                  <button className="underline text-rust" onClick={() => handleDelete(loan.id)}>Delete</button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              )}
+            </div>
+          )}
+        </>
       )}
     </Protected>
+  );
+}
+
+function LoanCard({
+  loan,
+  payeeName,
+  onRecordPayment,
+  onExtend,
+  onToggleClose,
+  onEdit,
+  onDelete,
+}: {
+  loan: Loan;
+  payeeName?: string;
+  onRecordPayment: () => void;
+  onExtend: () => void;
+  onToggleClose: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const interestAccrued = Number(loan.initial_interest) + Number(loan.extra_interest);
+  return (
+    <div className="ledger-card p-3.5">
+      <div className="flex items-start justify-between flex-wrap gap-2">
+        <div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold">{payeeName || "Unknown payee"}</span>
+            <StatusBadge loan={loan} />
+          </div>
+          <div className="font-mono text-xs text-inkSoft mt-1">
+            {inr(loan.principal)} · {loan.interest_rate}% {loan.interest_type} · started {fmtDate(loan.start_date)} · due {fmtDate(loan.due_date)}
+          </div>
+          {loan.notes && (
+            <div className="text-xs text-inkSoft mt-1.5 italic bg-black/5 px-2.5 py-1 rounded inline-block">
+              Note: {loan.notes}
+            </div>
+          )}
+        </div>
+        <div className="text-right">
+          <div className="font-mono font-bold text-gold">{inr(interestAccrued)}</div>
+          <div className="text-[10px] text-inkSoft">interest accrued</div>
+        </div>
+      </div>
+      <div className="flex gap-2 mt-2.5 pt-2.5 border-t border-dashed border-black/10 text-xs flex-wrap">
+        <button className="underline text-sage" onClick={onRecordPayment}>Record payment</button>
+        {loan.status !== "closed" && <button className="underline text-gold" onClick={onExtend}>Extend</button>}
+        <button className="underline" onClick={onToggleClose}>{loan.status === "closed" ? "Reopen" : "Close loan"}</button>
+        <button className="underline text-cover font-semibold" onClick={onEdit}>Edit</button>
+        <button className="underline text-rust" onClick={onDelete}>Delete</button>
+      </div>
+    </div>
   );
 }
 
