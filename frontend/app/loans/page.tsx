@@ -1,10 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Protected from "@/components/Protected";
-import StatusBadge from "@/components/StatusBadge";
+import StatusBadge, { getDaysLeft } from "@/components/StatusBadge";
 import { api } from "@/lib/api";
 import type { Loan, Payee } from "@/lib/types";
+
+type Toast = { id: number; message: string; kind: "success" | "error" };
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : "Something went wrong";
+}
 
 function inr(n: number | string) {
   return "₹" + Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 });
@@ -59,6 +65,14 @@ export default function LoansPage() {
   const [extendFor, setExtendFor] = useState<Loan | null>(null);
   const [editingLoan, setEditingLoan] = useState<Loan | null>(null);
   const [showClosed, setShowClosed] = useState(false);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastId = useRef(0);
+
+  function showToast(message: string, kind: Toast["kind"] = "success") {
+    const id = ++toastId.current;
+    setToasts((t) => [...t, { id, message, kind }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3500);
+  }
 
   async function load() {
     const [loansRes, payeesRes] = await Promise.all([
@@ -74,16 +88,50 @@ export default function LoansPage() {
   }, []);
 
   const payeeMap = useMemo(() => Object.fromEntries(payees.map((p) => [p.id, p])), [payees]);
-  const activeLoans = useMemo(() => loans.filter((l) => l.status !== "closed"), [loans]);
-  const closedLoans = useMemo(() => loans.filter((l) => l.status === "closed"), [loans]);
+  const activeLoans = useMemo(
+    () => loans.filter((l) => l.status !== "closed").sort((a, b) => getDaysLeft(a) - getDaysLeft(b)),
+    [loans]
+  );
+  const closedLoans = useMemo(
+    () =>
+      loans
+        .filter((l) => l.status === "closed")
+        .sort((a, b) => (b.closed_date || b.due_date).localeCompare(a.closed_date || a.due_date)),
+    [loans]
+  );
+  const summary = useMemo(() => {
+    let outstanding = 0;
+    let overdue = 0;
+    let dueSoon = 0;
+    for (const loan of activeLoans) {
+      outstanding += Number(loan.principal) + Number(loan.initial_interest) + Number(loan.extra_interest);
+      const daysLeft = getDaysLeft(loan);
+      if (daysLeft < 0) overdue++;
+      else if (daysLeft <= 3) dueSoon++;
+    }
+    return { outstanding, overdue, dueSoon };
+  }, [activeLoans]);
 
   async function handleToggleClose(loan: Loan) {
-    await api.put(`/api/loans/${loan.id}`, { status: loan.status === "closed" ? "active" : "closed" });
-    load();
+    try {
+      await api.put(`/api/loans/${loan.id}`, { status: loan.status === "closed" ? "active" : "closed" });
+      showToast(loan.status === "closed" ? "Loan reopened" : "Loan closed");
+      load();
+    } catch (err) {
+      showToast(errorMessage(err), "error");
+    }
   }
-  async function handleDelete(id: string) {
-    await api.delete(`/api/loans/${id}`);
-    load();
+  async function handleDelete(loan: Loan) {
+    if (!window.confirm(`Delete this ${inr(loan.principal)} loan to ${payeeMap[loan.payee_id]?.name || "this payee"}? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      await api.delete(`/api/loans/${loan.id}`);
+      showToast("Loan deleted");
+      load();
+    } catch (err) {
+      showToast(errorMessage(err), "error");
+    }
   }
 
   return (
@@ -101,15 +149,36 @@ export default function LoansPage() {
           onClose={() => setShowForm(false)}
           onSaved={() => {
             setShowForm(false);
+            showToast("Loan saved");
             load();
           }}
         />
       )}
       {paymentFor && (
-        <PaymentForm loan={paymentFor} payeeName={payeeMap[paymentFor.payee_id]?.name} onClose={() => setPaymentFor(null)} onSaved={() => { setPaymentFor(null); load(); }} />
+        <PaymentForm
+          loan={paymentFor}
+          payeeName={payeeMap[paymentFor.payee_id]?.name}
+          onClose={() => setPaymentFor(null)}
+          onSaved={() => {
+            setPaymentFor(null);
+            showToast("Payment recorded");
+            load();
+          }}
+          onError={(err) => showToast(errorMessage(err), "error")}
+        />
       )}
       {extendFor && (
-        <ExtendForm loan={extendFor} payeeName={payeeMap[extendFor.payee_id]?.name} onClose={() => setExtendFor(null)} onSaved={() => { setExtendFor(null); load(); }} />
+        <ExtendForm
+          loan={extendFor}
+          payeeName={payeeMap[extendFor.payee_id]?.name}
+          onClose={() => setExtendFor(null)}
+          onSaved={() => {
+            setExtendFor(null);
+            showToast("Loan extended");
+            load();
+          }}
+          onError={(err) => showToast(errorMessage(err), "error")}
+        />
       )}
       {editingLoan && (
         <LoanForm
@@ -118,9 +187,27 @@ export default function LoansPage() {
           onClose={() => setEditingLoan(null)}
           onSaved={() => {
             setEditingLoan(null);
+            showToast("Loan saved");
             load();
           }}
         />
+      )}
+
+      {!loading && loans.length > 0 && (
+        <div className="grid grid-cols-3 gap-2 mb-4">
+          <div className="ledger-card p-3 text-center">
+            <div className="font-mono font-bold text-gold">{inr(summary.outstanding)}</div>
+            <div className="text-[10px] text-inkSoft uppercase tracking-wider">Outstanding ({activeLoans.length} active)</div>
+          </div>
+          <div className="ledger-card p-3 text-center">
+            <div className="font-mono font-bold text-rust">{summary.overdue}</div>
+            <div className="text-[10px] text-inkSoft uppercase tracking-wider">Overdue</div>
+          </div>
+          <div className="ledger-card p-3 text-center">
+            <div className="font-mono font-bold text-gold">{summary.dueSoon}</div>
+            <div className="text-[10px] text-inkSoft uppercase tracking-wider">Due soon</div>
+          </div>
+        </div>
       )}
 
       {loading ? (
@@ -142,7 +229,7 @@ export default function LoansPage() {
                   onExtend={() => setExtendFor(loan)}
                   onToggleClose={() => handleToggleClose(loan)}
                   onEdit={() => setEditingLoan(loan)}
-                  onDelete={() => handleDelete(loan.id)}
+                  onDelete={() => handleDelete(loan)}
                 />
               ))}
             </div>
@@ -169,7 +256,7 @@ export default function LoansPage() {
                       onExtend={() => setExtendFor(loan)}
                       onToggleClose={() => handleToggleClose(loan)}
                       onEdit={() => setEditingLoan(loan)}
-                      onDelete={() => handleDelete(loan.id)}
+                      onDelete={() => handleDelete(loan)}
                     />
                   ))}
                 </div>
@@ -178,6 +265,17 @@ export default function LoansPage() {
           )}
         </>
       )}
+
+      <div className="fixed bottom-4 right-4 flex flex-col gap-2 z-50">
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className={`ledger-card px-3.5 py-2 text-sm font-semibold shadow-lg ${t.kind === "error" ? "text-rust" : "text-sage"}`}
+          >
+            {t.message}
+          </div>
+        ))}
+      </div>
     </Protected>
   );
 }
@@ -255,6 +353,7 @@ function LoanForm({
   const [startDate, setStartDate] = useState(editingLoan?.start_date ? editingLoan.start_date.slice(0, 10) : toLocalISOString(new Date()));
   const [notes, setNotes] = useState(editingLoan?.notes || "");
   const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   const [billingCycle, setBillingCycle] = useState<"day-wise" | "monthly">(
     editingLoan?.interest_type === "flat" ? "monthly" : "day-wise"
   );
@@ -394,8 +493,9 @@ function LoanForm({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setFormError(null);
     if (pVal === 0 && finalInterest === 0) {
-      alert("Please enter either a principal amount or interest/rent amount.");
+      setFormError("Please enter either a principal amount or interest/rent amount.");
       return;
     }
 
@@ -411,13 +511,15 @@ function LoanForm({
         initialInterest: finalInterest,
         notes: notes || undefined
       };
-      
+
       if (editingLoan) {
         await api.put(`/api/loans/${editingLoan.id}`, payload);
       } else {
         await api.post("/api/loans", payload);
       }
       onSaved();
+    } catch (err) {
+      setFormError(errorMessage(err));
     } finally {
       setSubmitting(false);
     }
@@ -505,6 +607,8 @@ function LoanForm({
         </div>
       </div>
 
+      {formError && <div className="text-rust text-sm mt-2">{formError}</div>}
+
       <div className="flex gap-2 mt-3">
         <button disabled={submitting} className="bg-cover text-goldBg text-sm font-semibold px-3.5 py-1.5 rounded">
           {submitting ? "Saving…" : "Save loan"}
@@ -517,7 +621,19 @@ function LoanForm({
   );
 }
 
-function PaymentForm({ loan, payeeName, onClose, onSaved }: { loan: Loan; payeeName?: string; onClose: () => void; onSaved: () => void }) {
+function PaymentForm({
+  loan,
+  payeeName,
+  onClose,
+  onSaved,
+  onError,
+}: {
+  loan: Loan;
+  payeeName?: string;
+  onClose: () => void;
+  onSaved: () => void;
+  onError: (err: unknown) => void;
+}) {
   const [interestAmount, setInterestAmount] = useState("");
   const [principalAmount, setPrincipalAmount] = useState("");
   const [date, setDate] = useState(toLocalISOString(new Date()));
@@ -525,6 +641,10 @@ function PaymentForm({ loan, payeeName, onClose, onSaved }: { loan: Loan; payeeN
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if ((Number(interestAmount) || 0) === 0 && (Number(principalAmount) || 0) === 0) {
+      onError(new Error("Enter an amount towards interest or principal."));
+      return;
+    }
     setSubmitting(true);
     try {
       await api.post("/api/payments", {
@@ -534,6 +654,8 @@ function PaymentForm({ loan, payeeName, onClose, onSaved }: { loan: Loan; payeeN
         paymentDate: date,
       });
       onSaved();
+    } catch (err) {
+      onError(err);
     } finally {
       setSubmitting(false);
     }
@@ -559,7 +681,19 @@ function PaymentForm({ loan, payeeName, onClose, onSaved }: { loan: Loan; payeeN
   );
 }
 
-function ExtendForm({ loan, payeeName, onClose, onSaved }: { loan: Loan; payeeName?: string; onClose: () => void; onSaved: () => void }) {
+function ExtendForm({
+  loan,
+  payeeName,
+  onClose,
+  onSaved,
+  onError,
+}: {
+  loan: Loan;
+  payeeName?: string;
+  onClose: () => void;
+  onSaved: () => void;
+  onError: (err: unknown) => void;
+}) {
   const [days, setDays] = useState("30");
   const [submitting, setSubmitting] = useState(false);
   const interest = calcInterest(Number(loan.principal), Number(loan.interest_rate), loan.interest_type, Number(days) || 0);
@@ -570,6 +704,8 @@ function ExtendForm({ loan, payeeName, onClose, onSaved }: { loan: Loan; payeeNa
     try {
       await api.post("/api/loan-extension", { loanId: loan.id, additionalDays: Number(days) });
       onSaved();
+    } catch (err) {
+      onError(err);
     } finally {
       setSubmitting(false);
     }
