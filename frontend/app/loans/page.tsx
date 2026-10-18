@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Protected from "@/components/Protected";
 import StatusBadge, { getDaysLeft } from "@/components/StatusBadge";
 import { api } from "@/lib/api";
-import type { Loan, Payee } from "@/lib/types";
+import type { Loan, Payee, Payment } from "@/lib/types";
 
 type Toast = { id: number; message: string; kind: "success" | "error" };
 
@@ -59,6 +59,7 @@ function diffDays(startStr: string, endStr: string): number {
 export default function LoansPage() {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [payees, setPayees] = useState<Payee[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [paymentFor, setPaymentFor] = useState<Loan | null>(null);
@@ -75,12 +76,14 @@ export default function LoansPage() {
   }
 
   async function load() {
-    const [loansRes, payeesRes] = await Promise.all([
+    const [loansRes, payeesRes, paymentsRes] = await Promise.all([
       api.get<{ loans: Loan[] }>("/api/loans"),
       api.get<{ payees: Payee[] }>("/api/payees"),
+      api.get<{ payments: Payment[] }>("/api/payments"),
     ]);
     setLoans(loansRes.loans);
     setPayees(payeesRes.payees);
+    setPayments(paymentsRes.payments);
     setLoading(false);
   }
   useEffect(() => {
@@ -88,6 +91,26 @@ export default function LoansPage() {
   }, []);
 
   const payeeMap = useMemo(() => Object.fromEntries(payees.map((p) => [p.id, p])), [payees]);
+  const paidByLoan = useMemo(() => {
+    const map: Record<string, { interestPaid: number; principalPaid: number }> = {};
+    for (const p of payments) {
+      const entry = map[p.loan_id] || { interestPaid: 0, principalPaid: 0 };
+      entry.interestPaid += Number(p.interest_amount);
+      entry.principalPaid += Number(p.principal_amount);
+      map[p.loan_id] = entry;
+    }
+    return map;
+  }, [payments]);
+  function loanDue(loan: Loan) {
+    const paid = paidByLoan[loan.id] || { interestPaid: 0, principalPaid: 0 };
+    const interestAccrued = Number(loan.initial_interest) + Number(loan.extra_interest);
+    return {
+      interestDue: Math.max(interestAccrued - paid.interestPaid, 0),
+      principalDue: Math.max(Number(loan.principal) - paid.principalPaid, 0),
+      interestPaid: paid.interestPaid,
+      principalPaid: paid.principalPaid,
+    };
+  }
   const activeLoans = useMemo(
     () => loans.filter((l) => l.status !== "closed").sort((a, b) => getDaysLeft(a) - getDaysLeft(b)),
     [loans]
@@ -104,13 +127,14 @@ export default function LoansPage() {
     let overdue = 0;
     let dueSoon = 0;
     for (const loan of activeLoans) {
-      outstanding += Number(loan.principal) + Number(loan.initial_interest) + Number(loan.extra_interest);
+      const due = loanDue(loan);
+      outstanding += due.principalDue + due.interestDue;
       const daysLeft = getDaysLeft(loan);
       if (daysLeft < 0) overdue++;
       else if (daysLeft <= 3) dueSoon++;
     }
     return { outstanding, overdue, dueSoon };
-  }, [activeLoans]);
+  }, [activeLoans, paidByLoan]);
 
   async function handleToggleClose(loan: Loan) {
     try {
@@ -225,6 +249,7 @@ export default function LoansPage() {
                   key={loan.id}
                   loan={loan}
                   payeeName={payeeMap[loan.payee_id]?.name}
+                  due={loanDue(loan)}
                   onRecordPayment={() => setPaymentFor(loan)}
                   onExtend={() => setExtendFor(loan)}
                   onToggleClose={() => handleToggleClose(loan)}
@@ -252,6 +277,7 @@ export default function LoansPage() {
                       key={loan.id}
                       loan={loan}
                       payeeName={payeeMap[loan.payee_id]?.name}
+                      due={loanDue(loan)}
                       onRecordPayment={() => setPaymentFor(loan)}
                       onExtend={() => setExtendFor(loan)}
                       onToggleClose={() => handleToggleClose(loan)}
@@ -283,6 +309,7 @@ export default function LoansPage() {
 function LoanCard({
   loan,
   payeeName,
+  due,
   onRecordPayment,
   onExtend,
   onToggleClose,
@@ -291,13 +318,14 @@ function LoanCard({
 }: {
   loan: Loan;
   payeeName?: string;
+  due: { interestDue: number; principalDue: number; interestPaid: number; principalPaid: number };
   onRecordPayment: () => void;
   onExtend: () => void;
   onToggleClose: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const interestAccrued = Number(loan.initial_interest) + Number(loan.extra_interest);
+  const totalPaid = due.interestPaid + due.principalPaid;
   return (
     <div className="ledger-card p-3.5">
       <div className="flex items-start justify-between flex-wrap gap-2">
@@ -307,7 +335,8 @@ function LoanCard({
             <StatusBadge loan={loan} />
           </div>
           <div className="font-mono text-xs text-inkSoft mt-1">
-            {inr(loan.principal)} · {loan.interest_rate}% {loan.interest_type} · started {fmtDate(loan.start_date)} · due {fmtDate(loan.due_date)}
+            {inr(loan.principal)}
+            {due.principalPaid > 0 && ` (${inr(due.principalDue)} due)`} · {loan.interest_rate}% {loan.interest_type} · started {fmtDate(loan.start_date)} · due {fmtDate(loan.due_date)}
           </div>
           {loan.notes && (
             <div className="text-xs text-inkSoft mt-1.5 italic bg-black/5 px-2.5 py-1 rounded inline-block">
@@ -316,8 +345,9 @@ function LoanCard({
           )}
         </div>
         <div className="text-right">
-          <div className="font-mono font-bold text-gold">{inr(interestAccrued)}</div>
-          <div className="text-[10px] text-inkSoft">interest accrued</div>
+          <div className="font-mono font-bold text-gold">{inr(due.interestDue)}</div>
+          <div className="text-[10px] text-inkSoft">interest due</div>
+          {totalPaid > 0 && <div className="text-[10px] text-sage mt-0.5">{inr(totalPaid)} paid so far</div>}
         </div>
       </div>
       <div className="flex gap-2 mt-2.5 pt-2.5 border-t border-dashed border-black/10 text-xs flex-wrap">
