@@ -66,6 +66,7 @@ export default function LoansPage() {
   const [extendFor, setExtendFor] = useState<Loan | null>(null);
   const [editingLoan, setEditingLoan] = useState<Loan | null>(null);
   const [showClosed, setShowClosed] = useState(false);
+  const [search, setSearch] = useState("");
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastId = useRef(0);
 
@@ -122,6 +123,13 @@ export default function LoansPage() {
         .sort((a, b) => (b.closed_date || b.due_date).localeCompare(a.closed_date || a.due_date)),
     [loans]
   );
+  const searchTerm = search.trim().toLowerCase();
+  function matchesSearch(loan: Loan) {
+    if (!searchTerm) return true;
+    return (payeeMap[loan.payee_id]?.name || "").toLowerCase().includes(searchTerm);
+  }
+  const visibleActiveLoans = useMemo(() => activeLoans.filter(matchesSearch), [activeLoans, searchTerm, payeeMap]);
+  const visibleClosedLoans = useMemo(() => closedLoans.filter(matchesSearch), [closedLoans, searchTerm, payeeMap]);
   const summary = useMemo(() => {
     let outstanding = 0;
     let overdue = 0;
@@ -160,12 +168,22 @@ export default function LoansPage() {
 
   return (
     <Protected>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
         <h1 className="font-display text-xl font-bold">Loans</h1>
         <button onClick={() => setShowForm(true)} className="bg-cover text-goldBg text-sm font-semibold px-3.5 py-1.5 rounded">
           + Add loan
         </button>
       </div>
+
+      {!loading && loans.length > 0 && (
+        <input
+          type="text"
+          className="ledger-input mb-4"
+          placeholder="Search by payee name…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      )}
 
       {showForm && (
         <LoanForm
@@ -240,16 +258,19 @@ export default function LoansPage() {
         <div className="ledger-card p-6 text-center text-sm text-inkSoft">No loans yet. Add a payee, then record your first loan.</div>
       ) : (
         <>
-          {activeLoans.length === 0 ? (
-            <div className="ledger-card p-6 text-center text-sm text-inkSoft">No active loans.</div>
+          {visibleActiveLoans.length === 0 ? (
+            <div className="ledger-card p-6 text-center text-sm text-inkSoft">
+              {activeLoans.length === 0 ? "No active loans." : "No active loans match your search."}
+            </div>
           ) : (
             <div className="flex flex-col gap-2">
-              {activeLoans.map((loan) => (
+              {visibleActiveLoans.map((loan) => (
                 <LoanCard
                   key={loan.id}
                   loan={loan}
                   payeeName={payeeMap[loan.payee_id]?.name}
                   due={loanDue(loan)}
+                  payments={payments.filter((p) => p.loan_id === loan.id)}
                   onRecordPayment={() => setPaymentFor(loan)}
                   onExtend={() => setExtendFor(loan)}
                   onToggleClose={() => handleToggleClose(loan)}
@@ -260,7 +281,7 @@ export default function LoansPage() {
             </div>
           )}
 
-          {closedLoans.length > 0 && (
+          {visibleClosedLoans.length > 0 && (
             <div className="mt-4">
               <button
                 type="button"
@@ -268,16 +289,17 @@ export default function LoansPage() {
                 className="flex items-center gap-1.5 text-xs font-semibold text-inkSoft underline"
               >
                 <span className={`inline-block transition-transform ${showClosed ? "rotate-90" : ""}`}>▶</span>
-                Closed loans ({closedLoans.length})
+                Closed loans ({visibleClosedLoans.length})
               </button>
               {showClosed && (
                 <div className="flex flex-col gap-2 mt-2">
-                  {closedLoans.map((loan) => (
+                  {visibleClosedLoans.map((loan) => (
                     <LoanCard
                       key={loan.id}
                       loan={loan}
                       payeeName={payeeMap[loan.payee_id]?.name}
                       due={loanDue(loan)}
+                      payments={payments.filter((p) => p.loan_id === loan.id)}
                       onRecordPayment={() => setPaymentFor(loan)}
                       onExtend={() => setExtendFor(loan)}
                       onToggleClose={() => handleToggleClose(loan)}
@@ -310,6 +332,7 @@ function LoanCard({
   loan,
   payeeName,
   due,
+  payments,
   onRecordPayment,
   onExtend,
   onToggleClose,
@@ -319,12 +342,14 @@ function LoanCard({
   loan: Loan;
   payeeName?: string;
   due: { interestDue: number; principalDue: number; interestPaid: number; principalPaid: number };
+  payments: Payment[];
   onRecordPayment: () => void;
   onExtend: () => void;
   onToggleClose: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const [showHistory, setShowHistory] = useState(false);
   const totalPaid = due.interestPaid + due.principalPaid;
   return (
     <div className="ledger-card p-3.5">
@@ -356,7 +381,26 @@ function LoanCard({
         <button className="underline" onClick={onToggleClose}>{loan.status === "closed" ? "Reopen" : "Close loan"}</button>
         <button className="underline text-cover font-semibold" onClick={onEdit}>Edit</button>
         <button className="underline text-rust" onClick={onDelete}>Delete</button>
+        {payments.length > 0 && (
+          <button className="underline text-inkSoft ml-auto" onClick={() => setShowHistory((v) => !v)}>
+            {showHistory ? "Hide" : "History"} ({payments.length})
+          </button>
+        )}
       </div>
+      {showHistory && (
+        <div className="mt-2 pt-2 border-t border-dashed border-black/10 flex flex-col gap-1">
+          {payments.map((p) => (
+            <div key={p.id} className="flex justify-between text-xs font-mono text-inkSoft">
+              <span>{fmtDate(p.payment_date)}</span>
+              <span>
+                {Number(p.interest_amount) > 0 && `${inr(p.interest_amount)} interest`}
+                {Number(p.interest_amount) > 0 && Number(p.principal_amount) > 0 && " + "}
+                {Number(p.principal_amount) > 0 && `${inr(p.principal_amount)} principal`}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

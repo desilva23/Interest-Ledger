@@ -10,6 +10,7 @@ export default function PayeesPage() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Payee | null>(null);
+  const [search, setSearch] = useState("");
 
   async function load() {
     const res = await api.get<{ payees: Payee[] }>("/api/payees");
@@ -24,6 +25,11 @@ export default function PayeesPage() {
     await api.delete(`/api/payees/${id}`);
     load();
   }
+
+  const searchTerm = search.trim().toLowerCase();
+  const visiblePayees = payees.filter(
+    (p) => !searchTerm || p.name.toLowerCase().includes(searchTerm) || (p.mobile || "").toLowerCase().includes(searchTerm)
+  );
 
   return (
     <Protected>
@@ -51,13 +57,25 @@ export default function PayeesPage() {
         />
       )}
 
+      {!loading && payees.length > 0 && (
+        <input
+          type="text"
+          className="ledger-input mb-4"
+          placeholder="Search by name or mobile…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      )}
+
       {loading ? (
         <p className="text-sm text-inkSoft">Loading…</p>
       ) : payees.length === 0 ? (
         <div className="ledger-card p-6 text-center text-sm text-inkSoft">No payees yet. Add the first person you&apos;re lending to.</div>
+      ) : visiblePayees.length === 0 ? (
+        <div className="ledger-card p-6 text-center text-sm text-inkSoft">No payees match your search.</div>
       ) : (
         <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-          {payees.map((p) => (
+          {visiblePayees.map((p) => (
             <div key={p.id} className="ledger-card p-3.5">
               <div className="font-semibold">{p.name}</div>
               {p.mobile && <div className="text-xs text-inkSoft">{p.mobile}</div>}
